@@ -1,0 +1,35 @@
+# Logs
+logs/
+*.log
+
+# Временные файлы
+*.csv
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Директории с данными
+data/
+
+# Файлы окружения
+.env
+
+# Файлы Docker
+.docker/
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Файлы IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Airflow
+airflow.db
+airflow.cfg
+webserver_config.py
+airflow-webserver.pid
