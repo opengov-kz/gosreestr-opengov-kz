@@ -46,39 +46,16 @@
 
 ## Установка и запуск
 
-### 1. Клонирование репозитория
-
-```bash
-git clone <url-репозитория>
-cd <директория-проекта>
-```
-
-### 2. Настройка переменных окружения
-
-Создайте файл `.env` в корневой директории проекта:
 
 ```
-AIRFLOW_UID=50000
-POSTGRES_PASSWORD=strong_password_here
-```
 
-### 3. Подготовка директорий
-
-```bash
-mkdir -p ./dags ./logs ./plugins ./scripts ./data ./postgresql
-```
-
-### 4. Копирование файлов
-
-Скопируйте все скрипты и SQL файлы в соответствующие директории.
-
-### 5. Запуск системы с Docker Compose
+### Запуск системы с Docker Compose
 
 ```bash
 docker-compose up -d
 ```
 
-### 6. Проверка работы Airflow
+### Проверка работы Airflow
 
 Откройте в браузере: http://localhost:8080
 
@@ -163,11 +140,3 @@ curl https://e-auction.e-qazyna.kz/p/ru/api/v1/auction-trades?PageNumber=1&Limit
 ```bash
 docker-compose exec gosreestr-db psql -U data_manager -d gosreestr_db -c "\dt"
 ```
-
-## Лицензия
-
-[Указать лицензию]
-
-## Контакты
-
-[Указать контактную информацию]
