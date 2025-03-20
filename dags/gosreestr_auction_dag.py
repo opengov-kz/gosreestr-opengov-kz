@@ -399,8 +399,8 @@ with DAG(
     'gosreestr_and_auction_etl',
     default_args=default_args,
     description='DAG для сбора и загрузки данных из Госреестра и системы электронных торгов',
-    schedule_interval='0 1 * * *',  # Запуск каждый день в 01:00
-    start_date=datetime(2023, 1, 1),
+    schedule_interval='0 19 * * *',  # Запуск каждый день в 00:00
+    start_date=datetime(2025, 3, 1),
     catchup=False,
     tags=['gosreestr', 'auction', 'etl'],
 ) as dag:
