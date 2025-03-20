@@ -61,6 +61,22 @@ docker-compose up -d
 
 Логин и пароль по умолчанию: airflow / airflow
 
+### Проверка данных в PostgreSQL базе данных
+Подключитесь к базе данных через Docker:
+
+```bash
+docker exec -it gr_alesh-gosreestr-db-1 psql -U data_manager -d gosreestr_db
+```
+После подключения вы можете выполнять SQL запросы:
+
+```bash
+SELECT COUNT(*) FROM gosreestr.objects;
+```
+
+```bash
+SELECT COUNT(*) FROM auction.trades;
+```
+
 ## Использование парсеров напрямую
 
 ### Парсер Госреестра
