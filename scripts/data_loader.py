@@ -10,20 +10,21 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import execute_values
 
+
 # Настройка логирования
 def setup_logging(log_dir="logs"):
     """
     Настройка логирования
-    
+
     Args:
         log_dir (str): Директория для хранения логов
     """
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-        
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(log_dir, f"data_loader_{timestamp}.log")
-    
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,18 +33,20 @@ def setup_logging(log_dir="logs"):
             logging.StreamHandler()
         ]
     )
-    
+
     return logging.getLogger('data_loader')
 
-logger = setup_logging()
+
+logger = logging.getLogger('data_loader')
+
 
 class PostgreSQLConnection:
     """Класс для подключения к PostgreSQL"""
-    
+
     def __init__(self, host, port, dbname, user, password):
         """
         Инициализация подключения к PostgreSQL
-        
+
         Args:
             host (str): Хост базы данных
             port (int): Порт базы данных
@@ -60,7 +63,7 @@ class PostgreSQLConnection:
         }
         self.conn = None
         self.cursor = None
-    
+
     def connect(self):
         """Установка соединения с базой данных"""
         try:
@@ -72,7 +75,7 @@ class PostgreSQLConnection:
         except Exception as e:
             logger.error(f"Ошибка подключения к PostgreSQL: {e}")
             return False
-    
+
     def disconnect(self):
         """Закрытие соединения с базой данных"""
         if self.cursor:
@@ -80,11 +83,11 @@ class PostgreSQLConnection:
         if self.conn:
             self.conn.close()
         logger.info("Соединение с PostgreSQL закрыто")
-    
+
     def commit(self):
         """Фиксация изменений в базе данных"""
         self.conn.commit()
-    
+
     def rollback(self):
         """Отмена изменений в базе данных"""
         self.conn.rollback()
@@ -92,48 +95,48 @@ class PostgreSQLConnection:
 
 class DataLoader:
     """Базовый класс для загрузки данных в PostgreSQL"""
-    
+
     def __init__(self, db_connection):
         """
         Инициализация загрузчика данных
-        
+
         Args:
             db_connection (PostgreSQLConnection): Подключение к PostgreSQL
         """
         self.db = db_connection
-    
-    def load_data_from_csv(self, csv_path, batch_size=1000):
+
+    def load_data_from_csv(self, csv_path):
         """
         Загрузка данных из CSV файла
-        
+
         Args:
             csv_path (str): Путь к CSV файлу
-            batch_size (int): Размер пакета для пакетной вставки
-            
+
         Returns:
             list: Загруженные данные
         """
         try:
             logger.info(f"Загрузка данных из файла {csv_path}")
-            
+
             if not os.path.isfile(csv_path):
                 logger.error(f"Файл {csv_path} не найден")
                 return []
-            
+
             with open(csv_path, 'r', encoding='utf-8') as csvfile:
                 csv_reader = csv.DictReader(csvfile)
                 data = list(csv_reader)
-            
+
             logger.info(f"Загружено {len(data)} записей из файла {csv_path}")
             return data
         except Exception as e:
             logger.error(f"Ошибка при загрузке данных из файла {csv_path}: {e}")
             return []
-    
-    def insert_import_record(self, source, records_count, status, error_message=None, file_name=None, additional_info=None):
+
+    def insert_import_record(self, source, records_count, status, error_message=None, file_name=None,
+                             additional_info=None):
         """
         Добавление записи о импорте данных
-        
+
         Args:
             source (str): Источник данных
             records_count (int): Количество загруженных записей
@@ -144,131 +147,331 @@ class DataLoader:
         """
         try:
             logger.info(f"Добавление записи о импорте данных из источника {source}")
-            
+
             query = """
                 INSERT INTO public.data_imports 
                 (source, records_count, status, error_message, file_name, additional_info) 
                 VALUES (%s, %s, %s, %s, %s, %s)
             """
-            
+
             # Преобразование additional_info в JSON
             additional_info_json = json.dumps(additional_info) if additional_info else None
-            
-            self.db.cursor.execute(query, (source, records_count, status, error_message, file_name, additional_info_json))
+
+            self.db.cursor.execute(query,
+                                   (source, records_count, status, error_message, file_name, additional_info_json))
             self.db.commit()
-            
+
             logger.info("Запись о импорте данных добавлена")
         except Exception as e:
             logger.error(f"Ошибка при добавлении записи о импорте данных: {e}")
             self.db.rollback()
 
 
-class GosreestrDataLoader(DataLoader):
-    """Класс для загрузки данных из Госреестра"""
-    
-    def transform_data(self, raw_data):
+class GosreestrNormalizedLoader(DataLoader):
+    """Класс для загрузки данных Госреестра в нормализованную БД"""
+
+    def ensure_reference_data(self, row):
         """
-        Преобразование данных из формата CSV в формат для вставки в БД
-        
+        Проверка наличия и добавление справочных данных
+
         Args:
-            raw_data (list): Исходные данные
-            
+            row (dict): Строка данных
+
         Returns:
-            list: Преобразованные данные
+            dict: Словарь с ID справочных данных
         """
-        transformed_data = []
-        
-        for row in raw_data:
-            # Проверка наличия обязательных полей
-            if 'flBin' not in row:
-                logger.warning(f"Пропуск записи без БИН: {row}")
-                continue
-                
-            # Преобразование данных
-            transformed_row = {
-                'bin': row.get('flBin', ''),
-                'name_ru': row.get('flNameRu', ''),
-                'opf': row.get('flOpf', ''),
-                'oked_l0': row.get('flOkedL0', ''),
-                'state_involvement': float(row.get('flStateInvolvement', 0)) if row.get('flStateInvolvement') else None,
-                'status': row.get('flStatus', '')
-            }
-            
-            transformed_data.append(transformed_row)
-        
-        logger.info(f"Преобразовано {len(transformed_data)} записей")
-        return transformed_data
-    
-    def insert_data(self, data, batch_size=1000):
+        ref_ids = {}
+
+        # 1. Обработка ОПФ
+        if row.get('flOpf'):
+            self.db.cursor.execute(
+                "INSERT INTO reference.organization_types (code, name_ru) VALUES (%s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('flOpf'), row.get('flOpf'))
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['organization_type_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.organization_types WHERE code = %s",
+                    (row.get('flOpf'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['organization_type_id'] = result[0]
+
+        # 2. Обработка отрасли (сектор)
+        if row.get('flOkedL0'):
+            sector_name = {
+                'O': 'Государственное управление',
+                'P': 'Образование',
+                'R': 'Искусство, развлечения и отдых',
+                'K': 'Финансовая и страховая деятельность'
+            }.get(row.get('flOkedL0'), row.get('flOkedL0'))
+
+            self.db.cursor.execute(
+                "INSERT INTO reference.industry_sectors (code, name_ru) VALUES (%s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('flOkedL0'), sector_name)
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['industry_sector_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.industry_sectors WHERE code = %s",
+                    (row.get('flOkedL0'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['industry_sector_id'] = result[0]
+
+        # 3. Обработка вида деятельности (ОКЭД)
+        if row.get('flOkedL3') and 'industry_sector_id' in ref_ids:
+            activity_name = {
+                '8423': 'Деятельность в области юстиции и правосудия',
+                '8411': 'Деятельность органов государственного управления',
+                '8412': 'Регулирование деятельности учреждений',
+                '8413': 'Регулирование и содействие в коммерческой деятельности',
+                '9312': 'Деятельность спортивных клубов',
+                '8559': 'Прочие виды образования',
+                '6420': 'Деятельность холдинговых компаний'
+            }.get(row.get('flOkedL3'), row.get('flOkedL3'))
+
+            self.db.cursor.execute(
+                "INSERT INTO reference.industry_activities (code, name_ru, sector_id) VALUES (%s, %s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('flOkedL3'), activity_name, ref_ids['industry_sector_id'])
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['industry_activity_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.industry_activities WHERE code = %s",
+                    (row.get('flOkedL3'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['industry_activity_id'] = result[0]
+
+        # 4. Обработка KFS уровень 0
+        if row.get('flKfsL0'):
+            kfs_name = {
+                '2': 'Государственная собственность',
+                '4': 'Частная собственность'
+            }.get(row.get('flKfsL0'), f"Код KFS {row.get('flKfsL0')}")
+
+            self.db.cursor.execute(
+                "INSERT INTO reference.kfs_levels (level, code, name_ru) VALUES (%s, %s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (0, row.get('flKfsL0'), kfs_name)
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['kfs_l0_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.kfs_levels WHERE code = %s",
+                    (row.get('flKfsL0'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['kfs_l0_id'] = result[0]
+
+        # 5. Обработка KFS уровень 1
+        if row.get('flKfsL1') and 'kfs_l0_id' in ref_ids:
+            kfs_name = {
+                '214': 'Республиканская собственность',
+                '242': 'Судебная система',
+                '209': 'Смешанная собственность',
+                '441': 'Частная организация'
+            }.get(row.get('flKfsL1'), f"Код KFS {row.get('flKfsL1')}")
+
+            self.db.cursor.execute(
+                "INSERT INTO reference.kfs_levels (level, code, name_ru, parent_id) VALUES (%s, %s, %s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (1, row.get('flKfsL1'), kfs_name, ref_ids['kfs_l0_id'])
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['kfs_l1_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.kfs_levels WHERE code = %s",
+                    (row.get('flKfsL1'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['kfs_l1_id'] = result[0]
+
+        # 6. Обработка KFS уровень 2
+        if row.get('flKfsL2') and 'kfs_l1_id' in ref_ids:
+            kfs_name = {
+                '214001': 'Центральные государственные органы',
+                '242001': 'Органы судебной системы',
+                '209001': 'Смешанная государственно-частная собственность',
+                '441118': 'Частные организации'
+            }.get(row.get('flKfsL2'), f"Код KFS {row.get('flKfsL2')}")
+
+            self.db.cursor.execute(
+                "INSERT INTO reference.kfs_levels (level, code, name_ru, parent_id) VALUES (%s, %s, %s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (2, row.get('flKfsL2'), kfs_name, ref_ids['kfs_l1_id'])
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['kfs_l2_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.kfs_levels WHERE code = %s",
+                    (row.get('flKfsL2'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['kfs_l2_id'] = result[0]
+
+        # 7. Обработка статуса
+        if row.get('flStatus'):
+            status_name = {
+                'ACT': 'Активный'
+            }.get(row.get('flStatus'), row.get('flStatus'))
+
+            self.db.cursor.execute(
+                "INSERT INTO reference.organization_statuses (code, name_ru) VALUES (%s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('flStatus'), status_name)
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['status_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.organization_statuses WHERE code = %s",
+                    (row.get('flStatus'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['status_id'] = result[0]
+
+        return ref_ids
+
+    def insert_organization(self, row, ref_ids):
         """
-        Вставка данных в базу данных
-        
+        Вставка организации
+
         Args:
-            data (list): Данные для вставки
-            batch_size (int): Размер пакета для пакетной вставки
-            
+            row (dict): Строка данных
+            ref_ids (dict): Словарь с ID справочных данных
+
         Returns:
-            int: Количество вставленных записей
+            int: ID вставленной организации или None
         """
         try:
-            if not data:
-                logger.warning("Нет данных для вставки")
-                return 0
-                
-            logger.info(f"Вставка {len(data)} записей в таблицу gosreestr.objects")
-            
-            # Подготовка запроса на обновление или вставку (UPSERT)
+            if not row.get('flBin') or not row.get('flBin').strip():
+                logger.warning(f"Пропуск записи без БИН: {row}")
+                return None
+
+            # Вставка организации
             query = """
-                INSERT INTO gosreestr.objects 
-                (bin, name_ru, opf, oked_l0, state_involvement, status) 
-                VALUES %s
-                ON CONFLICT (bin) DO UPDATE SET 
+                INSERT INTO gosreestr.organizations (
+                    bin, name_ru, organization_type_id, industry_sector_id, industry_activity_id, 
+                    kfs_l0_id, kfs_l1_id, kfs_l2_id, state_involvement, status_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (bin) DO UPDATE SET
                     name_ru = EXCLUDED.name_ru,
-                    opf = EXCLUDED.opf,
-                    oked_l0 = EXCLUDED.oked_l0,
+                    organization_type_id = EXCLUDED.organization_type_id,
+                    industry_sector_id = EXCLUDED.industry_sector_id,
+                    industry_activity_id = EXCLUDED.industry_activity_id,
+                    kfs_l0_id = EXCLUDED.kfs_l0_id,
+                    kfs_l1_id = EXCLUDED.kfs_l1_id,
+                    kfs_l2_id = EXCLUDED.kfs_l2_id,
                     state_involvement = EXCLUDED.state_involvement,
-                    status = EXCLUDED.status,
+                    status_id = EXCLUDED.status_id,
                     updated_at = NOW()
                 RETURNING id
             """
-            
-            # Преобразование данных в формат для execute_values
-            values = [
-                (
-                    row['bin'],
-                    row['name_ru'],
-                    row['opf'],
-                    row['oked_l0'],
-                    row['state_involvement'],
-                    row['status']
-                )
-                for row in data
-            ]
-            
-            # Пакетная вставка
-            count = 0
-            for i in range(0, len(values), batch_size):
-                batch = values[i:i + batch_size]
-                result = execute_values(self.db.cursor, query, batch, fetch=True)
-                count += len(result)
-                self.db.commit()
-                logger.info(f"Вставлено {len(result)} записей (пакет {i//batch_size + 1})")
-            
-            logger.info(f"Всего вставлено {count} записей в таблицу gosreestr.objects")
-            return count
+
+            self.db.cursor.execute(query, (
+                row.get('flBin'),
+                row.get('flNameRu'),
+                ref_ids.get('organization_type_id'),
+                ref_ids.get('industry_sector_id'),
+                ref_ids.get('industry_activity_id'),
+                ref_ids.get('kfs_l0_id'),
+                ref_ids.get('kfs_l1_id'),
+                ref_ids.get('kfs_l2_id'),
+                float(row.get('flStateInvolvement', 0)) if row.get('flStateInvolvement') else None,
+                ref_ids.get('status_id')
+            ))
+
+            result = self.db.cursor.fetchone()
+            if result:
+                return result[0]
+            return None
         except Exception as e:
-            logger.error(f"Ошибка при вставке данных в таблицу gosreestr.objects: {e}")
+            logger.error(f"Ошибка при вставке организации: {e}")
             self.db.rollback()
-            return 0
-    
+            return None
+
+    def update_organization_relations(self):
+        """
+        Обновление связей между организациями (owner и ogu)
+        """
+        try:
+            # Обновление связи owner
+            self.db.cursor.execute("""
+                UPDATE gosreestr.organizations o
+                SET owner_id = owner.id
+                FROM gosreestr.organizations owner
+                WHERE o.owner_id IS NULL
+                  AND o.bin IN (
+                      SELECT DISTINCT original.flBin
+                      FROM gosreestr.objects original
+                      WHERE original.flOwnerBin IS NOT NULL AND original.flOwnerBin != ''
+                  )
+                  AND owner.bin = (
+                      SELECT original.flOwnerBin
+                      FROM gosreestr.objects original
+                      WHERE original.flBin = o.bin
+                      LIMIT 1
+                  )
+            """)
+
+            # Обновление связи ogu
+            self.db.cursor.execute("""
+                UPDATE gosreestr.organizations o
+                SET ogu_id = ogu.id
+                FROM gosreestr.organizations ogu
+                WHERE o.ogu_id IS NULL
+                  AND o.bin IN (
+                      SELECT DISTINCT original.flBin
+                      FROM gosreestr.objects original
+                      WHERE original.flOguBin IS NOT NULL AND original.flOguBin != ''
+                  )
+                  AND ogu.bin = (
+                      SELECT original.flOguBin
+                      FROM gosreestr.objects original
+                      WHERE original.flBin = o.bin
+                      LIMIT 1
+                  )
+            """)
+
+            self.db.commit()
+            logger.info("Связи между организациями обновлены")
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении связей между организациями: {e}")
+            self.db.rollback()
+
     def load(self, csv_path, batch_size=1000):
         """
         Загрузка данных из CSV файла в базу данных
-        
+
         Args:
             csv_path (str): Путь к CSV файлу
             batch_size (int): Размер пакета для пакетной вставки
-            
+
         Returns:
             bool: Результат загрузки
         """
@@ -277,15 +480,34 @@ class GosreestrDataLoader(DataLoader):
             raw_data = self.load_data_from_csv(csv_path)
             if not raw_data:
                 return False
-            
-            # Преобразование данных
-            transformed_data = self.transform_data(raw_data)
-            if not transformed_data:
-                return False
-            
+
             # Вставка данных в БД
-            inserted_count = self.insert_data(transformed_data, batch_size)
-            
+            inserted_count = 0
+            for row in raw_data:
+                # Проверка наличия BIN
+                if not row.get('flBin') or not row.get('flBin').strip():
+                    logger.warning(f"Пропуск записи без БИН: {row}")
+                    continue
+
+                # Обеспечение наличия справочных данных
+                ref_ids = self.ensure_reference_data(row)
+
+                # Вставка организации
+                org_id = self.insert_organization(row, ref_ids)
+                if org_id:
+                    inserted_count += 1
+
+                # Фиксация изменений каждые batch_size записей
+                if inserted_count % batch_size == 0:
+                    self.db.commit()
+                    logger.info(f"Вставлено {inserted_count} записей")
+
+            # Фиксация оставшихся изменений
+            self.db.commit()
+
+            # Обновление связей между организациями
+            self.update_organization_relations()
+
             # Добавление записи о импорте
             self.insert_import_record(
                 source='gosreestr',
@@ -294,14 +516,15 @@ class GosreestrDataLoader(DataLoader):
                 file_name=os.path.basename(csv_path),
                 additional_info={
                     'total_records': len(raw_data),
-                    'transformed_records': len(transformed_data),
                     'inserted_records': inserted_count
                 }
             )
-            
+
+            logger.info(f"Всего вставлено {inserted_count} записей организаций")
             return inserted_count > 0
         except Exception as e:
             logger.error(f"Ошибка при загрузке данных Госреестра: {e}")
+            self.db.rollback()
             self.insert_import_record(
                 source='gosreestr',
                 records_count=0,
@@ -312,346 +535,502 @@ class GosreestrDataLoader(DataLoader):
             return False
 
 
-class AuctionDataLoader(DataLoader):
-    """Класс для загрузки данных аукционных торгов"""
-    
-    def transform_auction_data(self, raw_data):
+class AuctionNormalizedLoader(DataLoader):
+    """Класс для загрузки данных аукционных торгов в нормализованную БД"""
+
+    def ensure_reference_data(self, row):
         """
-        Преобразование данных аукционов из формата CSV в формат для вставки в БД
-        
+        Проверка наличия и добавление справочных данных
+
         Args:
-            raw_data (list): Исходные данные
-            
+            row (dict): Строка данных
+
         Returns:
-            tuple: (trades_data, objects_data) - данные о торгах и объектах
+            dict: Словарь с ID справочных данных
         """
-        trades_data = []
-        objects_data = []
-        
-        for row in raw_data:
-            # Проверка наличия обязательных полей
-            if 'AuctionId' not in row:
-                logger.warning(f"Пропуск записи без AuctionId: {row}")
-                continue
-            
-            # Преобразование данных о торгах
-            auction_id = int(row.get('AuctionId'))
-            
-            trade_row = {
-                'auction_id': auction_id,
-                'auction_type': row.get('AuctionType', ''),
-                'start_date': row.get('StartDate'),
-                'publish_date': row.get('PublishDate'),
-                'start_price': float(row.get('StartPrice', 0)) if row.get('StartPrice') else None,
-                'min_price': float(row.get('MinPrice', 0)) if row.get('MinPrice') else None,
-                'guarantee_payment_amount': float(row.get('GuaranteePaymentAmount', 0)) if row.get('GuaranteePaymentAmount') else None,
-                'pay_period': row.get('PayPeriod', ''),
-                'min_participants_count': int(row.get('MinParticipantsCount', 0)) if row.get('MinParticipantsCount') else None,
-                'publish_note_ru': row.get('PublishNoteRu', ''),
-                'publish_note_kz': row.get('PublishNoteKz', ''),
-                'payments_recipient_info_ru': row.get('PaymentsRecipientInfoRu', ''),
-                'payments_recipient_info_kz': row.get('PaymentsRecipientInfoKz', ''),
-                'note_ru': row.get('NoteRu', ''),
-                'note_kz': row.get('NoteKz', ''),
-                'auction_status': row.get('AuctionStatus', ''),
-                'win_price': float(row.get('WinPrice', 0)) if row.get('WinPrice') else None,
-                'participants_count': int(row.get('ParticipantsCount', 0)) if row.get('ParticipantsCount') else None
-            }
-            
-            trades_data.append(trade_row)
-            
-            # Извлекаем данные об объекте (поля, начинающиеся с "Object_")
-            object_fields = {k[7:]: v for k, v in row.items() if k.startswith('Object_')}
-            
-            if object_fields:
-                # Преобразуем метаданные в JSON, если они есть
-                meta_data = object_fields.get('MetaData')
-                if meta_data:
-                    try:
-                        if isinstance(meta_data, str):
-                            meta_data = json.loads(meta_data)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Невозможно декодировать метаданные как JSON: {meta_data}")
-                        meta_data = {"raw_data": meta_data}
-                
-                object_row = {
-                    'auction_id': auction_id,
-                    'object_type': object_fields.get('ObjectType', ''),
-                    'seller_xin': object_fields.get('SellerXin', ''),
-                    'seller_info_ru': object_fields.get('SellerInfoRu', ''),
-                    'seller_info_kz': object_fields.get('SellerInfoKz', ''),
-                    'balanceholder_info_ru': object_fields.get('BalanceholderInfoRu', ''),
-                    'balanceholder_info_kz': object_fields.get('BalanceholderInfoKz', ''),
-                    'name_ru': object_fields.get('NameRu', ''),
-                    'name_kz': object_fields.get('NameKz', ''),
-                    'description_ru': object_fields.get('DescriptionRu', ''),
-                    'description_kz': object_fields.get('DescriptionKz', ''),
-                    'seller_adr_country': object_fields.get('SellerAdrCountry', ''),
-                    'seller_adr_obl': object_fields.get('SellerAdrObl', ''),
-                    'seller_adr_reg': object_fields.get('SellerAdrReg', ''),
-                    'seller_adr_adr': object_fields.get('SellerAdrAdr', ''),
-                    'seller_phone_ru': object_fields.get('SellerPhoneRu', ''),
-                    'seller_phone_kz': object_fields.get('SellerPhoneKz', ''),
-                    'object_adr_country': object_fields.get('ObjectAdrCountry', ''),
-                    'object_adr_obl': object_fields.get('ObjectAdrObl', ''),
-                    'object_adr_reg': object_fields.get('ObjectAdrReg', ''),
-                    'object_adr_adr': object_fields.get('ObjectAdrAdr', ''),
-                    'meta_data': meta_data
-                }
-                
-                objects_data.append(object_row)
-        
-        logger.info(f"Преобразовано {len(trades_data)} записей о торгах и {len(objects_data)} записей об объектах")
-        return trades_data, objects_data
-    
-    def insert_auction_trades(self, trades_data, batch_size=1000):
+        ref_ids = {}
+
+        # 1. Обработка типа аукциона
+        if row.get('AuctionType'):
+            self.db.cursor.execute(
+                "INSERT INTO reference.auction_types (code, name_ru) VALUES (%s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('AuctionType'), row.get('AuctionType'))
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['auction_type_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.auction_types WHERE code = %s",
+                    (row.get('AuctionType'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['auction_type_id'] = result[0]
+
+        # 2. Обработка статуса аукциона
+        if row.get('AuctionStatus'):
+            status_name = {
+                'AcceptingApplications': 'Прием заявок'
+            }.get(row.get('AuctionStatus'), row.get('AuctionStatus'))
+
+            self.db.cursor.execute(
+                "INSERT INTO reference.auction_statuses (code, name_ru) VALUES (%s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('AuctionStatus'), status_name)
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['auction_status_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.auction_statuses WHERE code = %s",
+                    (row.get('AuctionStatus'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['auction_status_id'] = result[0]
+
+        # 3. Обработка периода оплаты
+        if row.get('PayPeriod'):
+            self.db.cursor.execute(
+                "INSERT INTO reference.payment_periods (code, name_ru) VALUES (%s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('PayPeriod'), row.get('PayPeriod'))
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['payment_period_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.payment_periods WHERE code = %s",
+                    (row.get('PayPeriod'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['payment_period_id'] = result[0]
+
+        # 4. Обработка типа объекта аукциона
+        if row.get('Object_ObjectType'):
+            self.db.cursor.execute(
+                "INSERT INTO reference.object_types (code, name_ru) VALUES (%s, %s) \
+                 ON CONFLICT (code) DO NOTHING RETURNING id",
+                (row.get('Object_ObjectType'), row.get('Object_ObjectType'))
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['object_type_id'] = result[0]
+            else:
+                self.db.cursor.execute(
+                    "SELECT id FROM reference.object_types WHERE code = %s",
+                    (row.get('Object_ObjectType'),)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    ref_ids['object_type_id'] = result[0]
+
+        # 5. Обработка страны (базовая)
+        self.db.cursor.execute(
+            "INSERT INTO reference.countries (code, name_ru) VALUES (%s, %s) \
+             ON CONFLICT (code) DO NOTHING RETURNING id",
+            ('KZ', 'Казахстан')
+        )
+        result = self.db.cursor.fetchone()
+        if result:
+            ref_ids['country_id'] = result[0]
+        else:
+            self.db.cursor.execute(
+                "SELECT id FROM reference.countries WHERE code = %s",
+                ('KZ',)
+            )
+            result = self.db.cursor.fetchone()
+            if result:
+                ref_ids['country_id'] = result[0]
+
+        return ref_ids
+
+    def insert_auction(self, row, ref_ids):
         """
-        Вставка данных о торгах в базу данных
-        
+        Вставка аукциона
+
         Args:
-            trades_data (list): Данные о торгах для вставки
-            batch_size (int): Размер пакета для пакетной вставки
-            
+            row (dict): Строка данных
+            ref_ids (dict): Словарь с ID справочных данных
+
         Returns:
-            int: Количество вставленных записей
+            int: ID вставленного аукциона или None
         """
         try:
-            if not trades_data:
-                logger.warning("Нет данных о торгах для вставки")
-                return 0
-                
-            logger.info(f"Вставка {len(trades_data)} записей в таблицу auction.trades")
-            
-            # Подготовка запроса на обновление или вставку (UPSERT)
+            if not row.get('AuctionId'):
+                logger.warning(f"Пропуск записи без AuctionId: {row}")
+                return None
+
+            # Преобразование дат
+            start_date = None
+            if row.get('StartDate'):
+                try:
+                    start_date = datetime.strptime(row.get('StartDate'), "%d.%m.%Y %H:%M")
+                except ValueError:
+                    logger.warning(f"Невозможно преобразовать StartDate: {row.get('StartDate')}")
+
+            publish_date = None
+            if row.get('PublishDate'):
+                try:
+                    publish_date = datetime.strptime(row.get('PublishDate'), "%d.%m.%Y %H:%M")
+                except ValueError:
+                    logger.warning(f"Невозможно преобразовать PublishDate: {row.get('PublishDate')}")
+
+            # Вставка аукциона
             query = """
-                INSERT INTO auction.trades 
-                (auction_id, auction_type, start_date, publish_date, start_price, min_price, 
-                guarantee_payment_amount, pay_period, min_participants_count, publish_note_ru, 
-                publish_note_kz, payments_recipient_info_ru, payments_recipient_info_kz, 
-                note_ru, note_kz, auction_status, win_price, participants_count) 
-                VALUES %s
-                ON CONFLICT (auction_id) DO UPDATE SET 
-                    auction_type = EXCLUDED.auction_type,
+                INSERT INTO auction.auctions (
+                    auction_id, auction_type_id, auction_status_id, start_date, publish_date,
+                    start_price, min_price, guarantee_payment_amount, payment_period_id,
+                    min_participants_count, participants_count, win_price, note_ru, note_kz
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (auction_id) DO UPDATE SET
+                    auction_type_id = EXCLUDED.auction_type_id,
+                    auction_status_id = EXCLUDED.auction_status_id,
                     start_date = EXCLUDED.start_date,
                     publish_date = EXCLUDED.publish_date,
                     start_price = EXCLUDED.start_price,
                     min_price = EXCLUDED.min_price,
                     guarantee_payment_amount = EXCLUDED.guarantee_payment_amount,
-                    pay_period = EXCLUDED.pay_period,
+                    payment_period_id = EXCLUDED.payment_period_id,
                     min_participants_count = EXCLUDED.min_participants_count,
-                    publish_note_ru = EXCLUDED.publish_note_ru,
-                    publish_note_kz = EXCLUDED.publish_note_kz,
-                    payments_recipient_info_ru = EXCLUDED.payments_recipient_info_ru,
-                    payments_recipient_info_kz = EXCLUDED.payments_recipient_info_kz,
+                    participants_count = EXCLUDED.participants_count,
+                    win_price = EXCLUDED.win_price,
                     note_ru = EXCLUDED.note_ru,
                     note_kz = EXCLUDED.note_kz,
-                    auction_status = EXCLUDED.auction_status,
-                    win_price = EXCLUDED.win_price,
-                    participants_count = EXCLUDED.participants_count,
                     updated_at = NOW()
                 RETURNING id
             """
-            
-            # Преобразование данных в формат для execute_values
-            values = [
-                (
-                    row['auction_id'],
-                    row['auction_type'],
-                    row['start_date'],
-                    row['publish_date'],
-                    row['start_price'],
-                    row['min_price'],
-                    row['guarantee_payment_amount'],
-                    row['pay_period'],
-                    row['min_participants_count'],
-                    row['publish_note_ru'],
-                    row['publish_note_kz'],
-                    row['payments_recipient_info_ru'],
-                    row['payments_recipient_info_kz'],
-                    row['note_ru'],
-                    row['note_kz'],
-                    row['auction_status'],
-                    row['win_price'],
-                    row['participants_count']
-                )
-                for row in trades_data
-            ]
-            
-            # Пакетная вставка
-            count = 0
-            for i in range(0, len(values), batch_size):
-                batch = values[i:i + batch_size]
-                result = execute_values(self.db.cursor, query, batch, fetch=True)
-                count += len(result)
-                self.db.commit()
-                logger.info(f"Вставлено {len(result)} записей о торгах (пакет {i//batch_size + 1})")
-            
-            logger.info(f"Всего вставлено {count} записей в таблицу auction.trades")
-            return count
+
+            self.db.cursor.execute(query, (
+                int(row.get('AuctionId')),
+                ref_ids.get('auction_type_id'),
+                ref_ids.get('auction_status_id'),
+                start_date,
+                publish_date,
+                float(row.get('StartPrice')) if row.get('StartPrice') else None,
+                float(row.get('MinPrice')) if row.get('MinPrice') else None,
+                float(row.get('GuaranteePaymentAmount')) if row.get('GuaranteePaymentAmount') else None,
+                ref_ids.get('payment_period_id'),
+                int(row.get('MinParticipantsCount')) if row.get('MinParticipantsCount') else None,
+                int(row.get('ParticipantsCount')) if row.get('ParticipantsCount') else None,
+                float(row.get('WinPrice')) if row.get('WinPrice') else None,
+                row.get('NoteRu'),
+                row.get('NoteKz')
+            ))
+
+            result = self.db.cursor.fetchone()
+            if result:
+                return result[0]
+            return None
         except Exception as e:
-            logger.error(f"Ошибка при вставке данных в таблицу auction.trades: {e}")
+            logger.error(f"Ошибка при вставке аукциона: {e}")
             self.db.rollback()
-            return 0
-    
-    def insert_auction_objects(self, objects_data, batch_size=1000):
-        """
-        Вставка данных об объектах аукционов в базу данных
-        
-        Args:
-            objects_data (list): Данные об объектах для вставки
-            batch_size (int): Размер пакета для пакетной вставки
-            
-        Returns:
-            int: Количество вставленных записей
-        """
-        try:
-            if not objects_data:
-                logger.warning("Нет данных об объектах для вставки")
-                return 0
-                
-            logger.info(f"Вставка {len(objects_data)} записей в таблицу auction.objects")
-            
-            # Подготовка запроса на обновление или вставку
-            query = """
-                INSERT INTO auction.objects 
-                (auction_id, object_type, seller_xin, seller_info_ru, seller_info_kz, 
-                balanceholder_info_ru, balanceholder_info_kz, name_ru, name_kz, 
-                description_ru, description_kz, seller_adr_country, seller_adr_obl, 
-                seller_adr_reg, seller_adr_adr, seller_phone_ru, seller_phone_kz, 
-                object_adr_country, object_adr_obl, object_adr_reg, object_adr_adr, meta_data) 
-                VALUES %s
-                ON CONFLICT (auction_id) DO UPDATE SET 
-                    object_type = EXCLUDED.object_type,
-                    seller_xin = EXCLUDED.seller_xin,
-                    seller_info_ru = EXCLUDED.seller_info_ru,
-                    seller_info_kz = EXCLUDED.seller_info_kz,
-                    balanceholder_info_ru = EXCLUDED.balanceholder_info_ru,
-                    balanceholder_info_kz = EXCLUDED.balanceholder_info_kz,
-                    name_ru = EXCLUDED.name_ru,
-                    name_kz = EXCLUDED.name_kz,
-                    description_ru = EXCLUDED.description_ru,
-                    description_kz = EXCLUDED.description_kz,
-                    seller_adr_country = EXCLUDED.seller_adr_country,
-                    seller_adr_obl = EXCLUDED.seller_adr_obl,
-                    seller_adr_reg = EXCLUDED.seller_adr_reg,
-                    seller_adr_adr = EXCLUDED.seller_adr_adr,
-                    seller_phone_ru = EXCLUDED.seller_phone_ru,
-                    seller_phone_kz = EXCLUDED.seller_phone_kz,
-                    object_adr_country = EXCLUDED.object_adr_country,
-                    object_adr_obl = EXCLUDED.object_adr_obl,
-                    object_adr_reg = EXCLUDED.object_adr_reg,
-                    object_adr_adr = EXCLUDED.object_adr_adr,
-                    meta_data = EXCLUDED.meta_data,
-                    updated_at = NOW()
-                RETURNING id
+            return None
+
+        def insert_auction_object(self, auction_id, row, ref_ids):
             """
-            
-            # Преобразование данных в формат для execute_values
-            values = []
-            for row in objects_data:
-                # Преобразование meta_data в JSON, если необходимо
-                meta_data = row.get('meta_data')
-                if meta_data and not isinstance(meta_data, str):
-                    meta_data = json.dumps(meta_data)
-                
-                values.append((
-                    row['auction_id'],
-                    row['object_type'],
-                    row['seller_xin'],
-                    row['seller_info_ru'],
-                    row['seller_info_kz'],
-                    row['balanceholder_info_ru'],
-                    row['balanceholder_info_kz'],
-                    row['name_ru'],
-                    row['name_kz'],
-                    row['description_ru'],
-                    row['description_kz'],
-                    row['seller_adr_country'],
-                    row['seller_adr_obl'],
-                    row['seller_adr_reg'],
-                    row['seller_adr_adr'],
-                    row['seller_phone_ru'],
-                    row['seller_phone_kz'],
-                    row['object_adr_country'],
-                    row['object_adr_obl'],
-                    row['object_adr_reg'],
-                    row['object_adr_adr'],
-                    meta_data
+            Вставка объекта аукциона
+
+            Args:
+                auction_id (int): ID аукциона
+                row (dict): Строка данных
+                ref_ids (dict): Словарь с ID справочных данных
+
+            Returns:
+                int: ID вставленного объекта или None
+            """
+            try:
+                if not auction_id:
+                    logger.warning(f"Пропуск вставки объекта без ID аукциона")
+                    return None
+
+                # Преобразование метаданных в JSON
+                meta_data = None
+                if row.get('Object_MetaData'):
+                    try:
+                        meta_data = json.loads(row.get('Object_MetaData'))
+                    except (json.JSONDecodeError, TypeError):
+                        meta_data = {"raw_data": row.get('Object_MetaData')}
+
+                # Преобразование даты SduDate
+                sdu_date = None
+                if row.get('Object_SduDate'):
+                    try:
+                        sdu_date = datetime.strptime(row.get('Object_SduDate'), "%d.%m.%Y %H:%M")
+                    except ValueError:
+                        logger.warning(f"Невозможно преобразовать Object_SduDate: {row.get('Object_SduDate')}")
+
+                # Поиск организации по SellerXin
+                seller_id = None
+                if row.get('Object_SellerXin'):
+                    self.db.cursor.execute(
+                        "SELECT id FROM gosreestr.organizations WHERE bin = %s",
+                        (row.get('Object_SellerXin'),)
+                    )
+                    result = self.db.cursor.fetchone()
+                    if result:
+                        seller_id = result[0]
+
+                # Вставка объекта аукциона
+                query = """
+                                INSERT INTO auction.objects (
+                                    auction_id, object_type_id, name_ru, name_kz, description_ru, description_kz,
+                                    balanceholder_info_ru, balanceholder_info_kz, seller_id, seller_xin,
+                                    seller_info_ru, seller_info_kz, seller_phone_ru, seller_phone_kz,
+                                    meta_data, sdu_date
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (auction_id) DO UPDATE SET
+                                    object_type_id = EXCLUDED.object_type_id,
+                                    name_ru = EXCLUDED.name_ru,
+                                    name_kz = EXCLUDED.name_kz,
+                                    description_ru = EXCLUDED.description_ru,
+                                    description_kz = EXCLUDED.description_kz,
+                                    balanceholder_info_ru = EXCLUDED.balanceholder_info_ru,
+                                    balanceholder_info_kz = EXCLUDED.balanceholder_info_kz,
+                                    seller_id = EXCLUDED.seller_id,
+                                    seller_xin = EXCLUDED.seller_xin,
+                                    seller_info_ru = EXCLUDED.seller_info_ru,
+                                    seller_info_kz = EXCLUDED.seller_info_kz,
+                                    seller_phone_ru = EXCLUDED.seller_phone_ru,
+                                    seller_phone_kz = EXCLUDED.seller_phone_kz,
+                                    meta_data = EXCLUDED.meta_data,
+                                    sdu_date = EXCLUDED.sdu_date,
+                                    updated_at = NOW()
+                                RETURNING id
+                            """
+
+                self.db.cursor.execute(query, (
+                    auction_id,
+                    ref_ids.get('object_type_id'),
+                    row.get('Object_NameRu'),
+                    row.get('Object_NameKz'),
+                    row.get('Object_DescriptionRu'),
+                    row.get('Object_DescriptionKz'),
+                    row.get('Object_BalanceholderInfoRu'),
+                    row.get('Object_BalanceholderInfoKz'),
+                    seller_id,
+                    row.get('Object_SellerXin'),
+                    row.get('Object_SellerInfoRu'),
+                    row.get('Object_SellerInfoKz'),
+                    row.get('Object_SellerPhoneRu'),
+                    row.get('Object_SellerPhoneKz'),
+                    json.dumps(meta_data) if meta_data else None,
+                    sdu_date
                 ))
-            
-            # Пакетная вставка
-            count = 0
-            for i in range(0, len(values), batch_size):
-                batch = values[i:i + batch_size]
-                result = execute_values(self.db.cursor, query, batch, fetch=True)
-                count += len(result)
+
+                result = self.db.cursor.fetchone()
+                if result:
+                    return result[0]
+                return None
+            except Exception as e:
+                logger.error(f"Ошибка при вставке объекта аукциона: {e}")
+                self.db.rollback()
+                return None
+
+        def insert_address(self, entity_type, entity_id, row, ref_ids):
+            """
+            Вставка адреса
+
+            Args:
+                entity_type (str): Тип сущности ('auction_object', 'seller')
+                entity_id (int): ID сущности
+                row (dict): Строка данных
+                ref_ids (dict): Словарь с ID справочных данных
+
+            Returns:
+                int: ID вставленного адреса или None
+            """
+            try:
+                if not entity_id or not ref_ids.get('country_id'):
+                    return None
+
+                address = None
+                if entity_type == 'auction_object' and row.get('Object_ObjectAdrAdr'):
+                    address = row.get('Object_ObjectAdrAdr')
+                elif entity_type == 'seller' and row.get('Object_SellerAdrAdr'):
+                    address = row.get('Object_SellerAdrAdr')
+
+                if not address:
+                    return None
+
+                # Проверка наличия адреса в базе
+                self.db.cursor.execute(
+                    "SELECT id FROM gosreestr.addresses WHERE entity_type = %s AND entity_id = %s",
+                    (entity_type, entity_id)
+                )
+                result = self.db.cursor.fetchone()
+                if result:
+                    # Обновление существующего адреса
+                    self.db.cursor.execute(
+                        "UPDATE gosreestr.addresses SET address = %s, updated_at = NOW() \
+                         WHERE entity_type = %s AND entity_id = %s",
+                        (address, entity_type, entity_id)
+                    )
+                    return result[0]
+                else:
+                    # Вставка нового адреса
+                    self.db.cursor.execute(
+                        "INSERT INTO gosreestr.addresses (entity_type, entity_id, country_id, address) \
+                         VALUES (%s, %s, %s, %s) RETURNING id",
+                        (entity_type, entity_id, ref_ids.get('country_id'), address)
+                    )
+                    result = self.db.cursor.fetchone()
+                    if result:
+                        return result[0]
+                return None
+            except Exception as e:
+                logger.error(f"Ошибка при вставке адреса: {e}")
+                self.db.rollback()
+                return None
+
+        def load(self, csv_path, batch_size=1000):
+            """
+            Загрузка данных из CSV файла в базу данных
+
+            Args:
+                csv_path (str): Путь к CSV файлу
+                batch_size (int): Размер пакета для пакетной вставки
+
+            Returns:
+                bool: Результат загрузки
+            """
+            try:
+                # Загрузка данных из CSV
+                raw_data = self.load_data_from_csv(csv_path)
+                if not raw_data:
+                    return False
+
+                # Вставка данных в БД
+                auction_count = 0
+                object_count = 0
+                address_count = 0
+
+                for row in raw_data:
+                    # Проверка наличия AuctionId
+                    if not row.get('AuctionId'):
+                        logger.warning(f"Пропуск записи без AuctionId: {row}")
+                        continue
+
+                    # Обеспечение наличия справочных данных
+                    ref_ids = self.ensure_reference_data(row)
+
+                    # Вставка аукциона
+                    auction_id = self.insert_auction(row, ref_ids)
+                    if auction_id:
+                        auction_count += 1
+
+                        # Вставка объекта аукциона
+                        object_id = self.insert_auction_object(auction_id, row, ref_ids)
+                        if object_id:
+                            object_count += 1
+
+                            # Вставка адреса объекта
+                            address_id = self.insert_address('auction_object', object_id, row, ref_ids)
+                            if address_id:
+                                address_count += 1
+
+                            # Вставка адреса продавца
+                            seller_address_id = self.insert_address('seller', object_id, row, ref_ids)
+                            if seller_address_id:
+                                address_count += 1
+
+                    # Фиксация изменений каждые batch_size записей
+                    if auction_count % batch_size == 0:
+                        self.db.commit()
+                        logger.info(
+                            f"Вставлено {auction_count} аукционов, {object_count} объектов, {address_count} адресов")
+
+                # Фиксация оставшихся изменений
                 self.db.commit()
-                logger.info(f"Вставлено {len(result)} записей об объектах (пакет {i//batch_size + 1})")
-            
-            logger.info(f"Всего вставлено {count} записей в таблицу auction.objects")
-            return count
-        except Exception as e:
-            logger.error(f"Ошибка при вставке данных в таблицу auction.objects: {e}")
-            self.db.rollback()
-            return 0
-    
-    def load(self, csv_path, batch_size=1000):
-        """
-        Загрузка данных аукционов из CSV файла в базу данных
-        
-        Args:
-            csv_path (str): Путь к CSV файлу
-            batch_size (int): Размер пакета для пакетной вставки
-            
-        Returns:
-            bool: Результат загрузки
-        """
-        try:
-            # Загрузка данных из CSV
-            raw_data = self.load_data_from_csv(csv_path)
-            if not raw_data:
-                return False
-            
-            # Преобразование данных
-            trades_data, objects_data = self.transform_auction_data(raw_data)
-            if not trades_data:
-                return False
-            
-            # Вставка данных о торгах в БД
-            trades_count = self.insert_auction_trades(trades_data, batch_size)
-            
-            # Вставка данных об объектах в БД
-            objects_count = self.insert_auction_objects(objects_data, batch_size)
-            
-            # Добавление записи о импорте
-            self.insert_import_record(
-                source='auction',
-                records_count=trades_count,
-                status='success' if trades_count > 0 else 'error',
-                file_name=os.path.basename(csv_path),
-                additional_info={
-                    'total_records': len(raw_data),
-                    'trades_records': len(trades_data),
-                    'objects_records': len(objects_data),
-                    'inserted_trades': trades_count,
-                    'inserted_objects': objects_count
-                }
-            )
-            
-            return trades_count > 0
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке данных аукционов: {e}")
-            self.insert_import_record(
-                source='auction',
-                records_count=0,
-                status='error',
-                error_message=str(e),
-                file_name=os.path.basename(csv_path)
-            )
-            return False
 
+                # Добавление записи о импорте
+                self.insert_import_record(
+                    source='auction',
+                    records_count=auction_count,
+                    status='success' if auction_count > 0 else 'error',
+                    file_name=os.path.basename(csv_path),
+                    additional_info={
+                        'total_records': len(raw_data),
+                        'inserted_auctions': auction_count,
+                        'inserted_objects': object_count,
+                        'inserted_addresses': address_count
+                    }
+                )
 
-def main():
-    """Основная функция для загрузки данных"""
-    parser = argparse.ArgumentParser(description="Загрузка данных из CSV в PostgreSQL")
-    parser.add_argument("--source", choices=["gosreestr", "auction"], required=True, help="Источник данных")
+                logger.info(
+                    f"Всего вставлено {auction_count} аукционов, {object_count} объектов, {address_count} адресов")
+                return auction_count > 0
+            except Exception as e:
+                logger.error(f"Ошибка при загрузке данных аукционов: {e}")
+                self.db.rollback()
+                self.insert_import_record(
+                    source='auction',
+                    records_count=0,
+                    status='error',
+                    error_message=str(e),
+                    file_name=os.path.basename(csv_path)
+                )
+                return False
+
+        def main():
+            """Основная функция для загрузки данных"""
+            # Настройка логирования
+            logger = setup_logging()
+
+            # Настройка аргументов командной строки
+            parser = argparse.ArgumentParser(description="Загрузка данных из CSV в нормализованную PostgreSQL БД")
+            parser.add_argument("--source", choices=["gosreestr", "auction"], required=True, help="Источник данных")
+            parser.add_argument("--file", required=True, help="Путь к CSV файлу")
+            parser.add_argument("--host", default="localhost", help="Хост PostgreSQL")
+            parser.add_argument("--port", type=int, default=5432, help="Порт PostgreSQL")
+            parser.add_argument("--dbname", default="gosreestr_db", help="Имя базы данных")
+            parser.add_argument("--user", default="data_manager", help="Имя пользователя")
+            parser.add_argument("--password", help="Пароль пользователя")
+            parser.add_argument("--batch-size", type=int, default=1000, help="Размер пакета для вставки")
+
+            args = parser.parse_args()
+
+            # Проверка наличия файла
+            if not os.path.isfile(args.file):
+                logger.error(f"Файл {args.file} не найден")
+                sys.exit(1)
+
+            # Создание подключения к БД
+            db_connection = PostgreSQLConnection(
+                host=args.host,
+                port=args.port,
+                dbname=args.dbname,
+                user=args.user,
+                password=args.password
+            )
+
+            if not db_connection.connect():
+                logger.error("Не удалось подключиться к PostgreSQL")
+                sys.exit(1)
+
+            try:
+                # Выбор загрузчика в зависимости от источника
+                if args.source == "gosreestr":
+                    loader = GosreestrNormalizedLoader(db_connection)
+                else:  # auction
+                    loader = AuctionNormalizedLoader(db_connection)
+
+                # Загрузка данных
+                result = loader.load(args.file, args.batch_size)
+
+                if result:
+                    logger.info(f"Данные из файла {args.file} успешно загружены в базу данных")
+                else:
+                    logger.error(f"Не удалось загрузить данные из файла {args.file}")
+                    sys.exit(1)
+            finally:
+                # Закрытие соединения с БД
+                db_connection.disconnect()
+
+        if __name__ == "__main__":
+            main()

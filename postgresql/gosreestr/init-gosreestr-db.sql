@@ -1,98 +1,239 @@
--- Создание схемы для данных госреестра
-CREATE SCHEMA IF NOT EXISTS gosreestr;
+-- -----------------------------------------------------
+-- Схема нормализованной базы данных (3НФ)
+-- Для хранения данных Госреестра и Аукционов
+-- -----------------------------------------------------
 
--- Создание схемы для данных аукционов
-CREATE SCHEMA IF NOT EXISTS auction;
+-- Создание схем
+CREATE SCHEMA IF NOT EXISTS reference;   -- Для справочников
+CREATE SCHEMA IF NOT EXISTS gosreestr;   -- Для данных госреестра
+CREATE SCHEMA IF NOT EXISTS auction;     -- Для данных аукционов
 
--- Создание таблицы для объектов госреестра
-CREATE TABLE gosreestr.objects (
+-- =============================================================
+-- СПРАВОЧНИКИ (REFERENCE)
+-- =============================================================
+
+-- Организационно-правовые формы
+CREATE TABLE reference.organization_types (
     id SERIAL PRIMARY KEY,
-    bin VARCHAR(12) NOT NULL UNIQUE,  -- БИН организации
-    name_ru TEXT,              -- Наименование организации
-    opf VARCHAR(100),          -- ОПФ организации
-    oked_l0 VARCHAR(100),      -- Отрасль
-    state_involvement NUMERIC, -- Гос участие, %
-    status VARCHAR(50),        -- Статус объекта
+    code VARCHAR(10) NOT NULL UNIQUE,    -- ГУО, ТОО, и т.д.
+    name_ru TEXT NOT NULL,
+    description TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Создание индексов для повышения производительности
-CREATE INDEX idx_gosreestr_objects_bin ON gosreestr.objects(bin);
-CREATE INDEX idx_gosreestr_objects_status ON gosreestr.objects(status);
-CREATE INDEX idx_gosreestr_objects_opf ON gosreestr.objects(opf);
-CREATE INDEX idx_gosreestr_objects_oked_l0 ON gosreestr.objects(oked_l0);
-
--- Создание таблицы для аукционных торгов
-CREATE TABLE auction.trades (
+-- Отрасли (верхний уровень ОКЭД)
+CREATE TABLE reference.industry_sectors (
     id SERIAL PRIMARY KEY,
-    auction_id INTEGER UNIQUE NOT NULL,   -- Номер торга (AuctionId)
-    auction_type VARCHAR(100),            -- Тип торгов (AuctionType)
-    start_date TIMESTAMP,                 -- Дата начала торгов (StartDate)
-    publish_date TIMESTAMP,               -- Дата публикации (PublishDate)
-    start_price NUMERIC,                  -- Стартовая цена (StartPrice)
-    min_price NUMERIC,                    -- Минимальная цена (MinPrice)
-    guarantee_payment_amount NUMERIC,     -- Гарантийный взнос (GuaranteePaymentAmount)
-    pay_period VARCHAR(100),              -- Периодичность оплаты (PayPeriod)
-    min_participants_count INTEGER,       -- Минимально требуемое кол-во участников (MinParticipantsCount)
-    publish_note_ru TEXT,                 -- Данные о публикации (PublishNoteRu)
-    publish_note_kz TEXT,                 -- Данные о публикации (PublishNoteKz)
-    payments_recipient_info_ru TEXT,      -- Реквизиты получателя гар взноса (PaymentsRecipientInfoRu)
-    payments_recipient_info_kz TEXT,      -- Реквизиты получателя гар взноса (PaymentsRecipientInfoKz)
-    note_ru TEXT,                         -- Примечание (NoteRu)
-    note_kz TEXT,                         -- Примечание (NoteKz)
-    auction_status VARCHAR(100),          -- Статус торгов (AuctionStatus)
-    win_price NUMERIC,                    -- Цена продажи/арендный платеж (WinPrice)
-    participants_count INTEGER,           -- Кол-во участников (ParticipantsCount)
+    code VARCHAR(5) NOT NULL UNIQUE,     -- O, K, P, и т.д.
+    name_ru TEXT NOT NULL,
+    description TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Создание таблицы для объектов аукционных торгов
+-- Виды деятельности (ОКЭД L3)
+CREATE TABLE reference.industry_activities (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(10) NOT NULL UNIQUE,    -- 8413, 6420, и т.д.
+    name_ru TEXT NOT NULL,
+    sector_id INTEGER REFERENCES reference.industry_sectors(id),
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Уровни KFS (классификатор форм собственности)
+CREATE TABLE reference.kfs_levels (
+    id SERIAL PRIMARY KEY,
+    level INTEGER NOT NULL,              -- 0, 1, 2
+    code VARCHAR(10) NOT NULL UNIQUE,    -- 2, 214, 214001, и т.д.
+    name_ru TEXT NOT NULL,
+    parent_id INTEGER REFERENCES reference.kfs_levels(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Статусы организаций
+CREATE TABLE reference.organization_statuses (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(10) NOT NULL UNIQUE,    -- ACT, и т.д.
+    name_ru TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Типы аукционов
+CREATE TABLE reference.auction_types (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(50) NOT NULL UNIQUE,    -- TenderArenda10082019, и т.д.
+    name_ru TEXT NOT NULL,
+    name_kz TEXT,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Статусы аукционов
+CREATE TABLE reference.auction_statuses (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(50) NOT NULL UNIQUE,    -- AcceptingApplications, и т.д.
+    name_ru TEXT NOT NULL,
+    name_kz TEXT,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Типы объектов аукционов
+CREATE TABLE reference.object_types (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(50) NOT NULL UNIQUE,
+    name_ru TEXT NOT NULL,
+    name_kz TEXT,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Периоды оплаты
+CREATE TABLE reference.payment_periods (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(50) NOT NULL UNIQUE,
+    name_ru TEXT NOT NULL,
+    name_kz TEXT,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Страны
+CREATE TABLE reference.countries (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(10) NOT NULL UNIQUE,
+    name_ru TEXT NOT NULL,
+    name_kz TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Регионы (области)
+CREATE TABLE reference.regions (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(10) NOT NULL UNIQUE,
+    name_ru TEXT NOT NULL,
+    name_kz TEXT,
+    country_id INTEGER REFERENCES reference.countries(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Районы
+CREATE TABLE reference.districts (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(10) NOT NULL UNIQUE,
+    name_ru TEXT NOT NULL,
+    name_kz TEXT,
+    region_id INTEGER REFERENCES reference.regions(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =============================================================
+-- ДАННЫЕ ГОСРЕЕСТРА (GOSREESTR)
+-- =============================================================
+
+-- Организации
+CREATE TABLE gosreestr.organizations (
+    id SERIAL PRIMARY KEY,
+    bin VARCHAR(12) NOT NULL UNIQUE,
+    name_ru TEXT NOT NULL,
+    organization_type_id INTEGER REFERENCES reference.organization_types(id),
+    industry_sector_id INTEGER REFERENCES reference.industry_sectors(id),
+    industry_activity_id INTEGER REFERENCES reference.industry_activities(id),
+    kfs_l0_id INTEGER REFERENCES reference.kfs_levels(id),
+    kfs_l1_id INTEGER REFERENCES reference.kfs_levels(id),
+    kfs_l2_id INTEGER REFERENCES reference.kfs_levels(id),
+    state_involvement NUMERIC,
+    status_id INTEGER REFERENCES reference.organization_statuses(id),
+    owner_id INTEGER REFERENCES gosreestr.organizations(id),
+    ogu_id INTEGER REFERENCES gosreestr.organizations(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =============================================================
+-- ДАННЫЕ АУКЦИОНОВ (AUCTION)
+-- =============================================================
+
+-- Аукционы
+CREATE TABLE auction.auctions (
+    id SERIAL PRIMARY KEY,
+    auction_id INTEGER NOT NULL UNIQUE,
+    auction_type_id INTEGER REFERENCES reference.auction_types(id),
+    auction_status_id INTEGER REFERENCES reference.auction_statuses(id),
+    start_date TIMESTAMP,
+    publish_date TIMESTAMP,
+    start_price NUMERIC,
+    min_price NUMERIC,
+    guarantee_payment_amount NUMERIC,
+    payment_period_id INTEGER REFERENCES reference.payment_periods(id),
+    min_participants_count INTEGER,
+    participants_count INTEGER,
+    win_price NUMERIC,
+    publish_note_ru TEXT,
+    publish_note_kz TEXT,
+    payments_recipient_info_ru TEXT,
+    payments_recipient_info_kz TEXT,
+    note_ru TEXT,
+    note_kz TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Объекты аукционов
 CREATE TABLE auction.objects (
     id SERIAL PRIMARY KEY,
-    auction_id INTEGER NOT NULL,          -- Связь с торгами
-    object_type VARCHAR(100),             -- Тип объекта (ObjectType)
-    seller_xin VARCHAR(12),               -- БИН/ИИН продавца (SellerXin)
-    seller_info_ru TEXT,                  -- Продавец (SellerInfoRu)
-    seller_info_kz TEXT,                  -- Продавец (SellerInfoKz)
-    balanceholder_info_ru TEXT,           -- Балансодержатель (BalanceholderInfoRu)
-    balanceholder_info_kz TEXT,           -- Балансодержатель (BalanceholderInfoKz)
-    name_ru TEXT,                         -- Наименование объекта (NameRu)
-    name_kz TEXT,                         -- Наименование объекта (NameKz)
-    description_ru TEXT,                  -- Описание объекта (DescriptionRu)
-    description_kz TEXT,                  -- Описание объекта (DescriptionKz)
-    seller_adr_country VARCHAR(100),      -- Адрес продавца страна (SellerAdrCountry)
-    seller_adr_obl VARCHAR(100),          -- Адрес продавца область (SellerAdrObl)
-    seller_adr_reg VARCHAR(100),          -- Адрес продавца район (SellerAdrReg)
-    seller_adr_adr TEXT,                  -- Адрес продавца (SellerAdrAdr)
-    seller_phone_ru TEXT,                 -- Телефон продавца (SellerPhoneRu)
-    seller_phone_kz TEXT,                 -- Телефон продавца (SellerPhoneKz)
-    object_adr_country VARCHAR(100),      -- Адрес объекта страна (ObjectAdrCountry)
-    object_adr_obl VARCHAR(100),          -- Адрес объекта область (ObjectAdrObl)
-    object_adr_reg VARCHAR(100),          -- Адрес объекта район (ObjectAdrReg)
-    object_adr_adr TEXT,                  -- Адрес объекта (ObjectAdrAdr)
-    meta_data JSONB,                      -- Метаданные (MetaData) в формате JSON
+    auction_id INTEGER NOT NULL REFERENCES auction.auctions(id),
+    object_type_id INTEGER REFERENCES reference.object_types(id),
+    name_ru TEXT,
+    name_kz TEXT,
+    description_ru TEXT,
+    description_kz TEXT,
+    balanceholder_info_ru TEXT,
+    balanceholder_info_kz TEXT,
+    seller_id INTEGER REFERENCES gosreestr.organizations(id),
+    seller_xin VARCHAR(12),
+    seller_info_ru TEXT,
+    seller_info_kz TEXT,
+    seller_phone_ru TEXT,
+    seller_phone_kz TEXT,
+    meta_data JSONB,
+    sdu_date TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    
-    -- Связь с таблицей торгов
-    CONSTRAINT fk_auction_trade FOREIGN KEY (auction_id) 
-        REFERENCES auction.trades(auction_id) ON DELETE CASCADE
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Создание индексов для аукционных торгов
-CREATE INDEX idx_auction_trades_auction_id ON auction.trades(auction_id);
-CREATE INDEX idx_auction_trades_auction_status ON auction.trades(auction_status);
-CREATE INDEX idx_auction_trades_start_date ON auction.trades(start_date);
-CREATE INDEX idx_auction_trades_publish_date ON auction.trades(publish_date);
+-- Адреса
+CREATE TABLE gosreestr.addresses (
+    id SERIAL PRIMARY KEY,
+    entity_type VARCHAR(50) NOT NULL,    -- 'organization', 'auction_object', 'seller'
+    entity_id INTEGER NOT NULL,
+    country_id INTEGER REFERENCES reference.countries(id),
+    region_id INTEGER REFERENCES reference.regions(id),
+    district_id INTEGER REFERENCES reference.districts(id),
+    address TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT addresses_entity_unique UNIQUE (entity_type, entity_id)
+);
 
--- Создание индексов для объектов аукционных торгов
-CREATE INDEX idx_auction_objects_auction_id ON auction.objects(auction_id);
-CREATE INDEX idx_auction_objects_seller_xin ON auction.objects(seller_xin);
-CREATE INDEX idx_auction_objects_object_type ON auction.objects(object_type);
+-- =============================================================
+-- ИМПОРТ ДАННЫХ (DATA_IMPORTS)
+-- =============================================================
 
--- Создание таблицы для хранения данных о последних загрузках
+-- Записи об импортах
 CREATE TABLE public.data_imports (
     id SERIAL PRIMARY KEY,
     source VARCHAR(100) NOT NULL,         -- Источник данных (gosreestr, auction)
@@ -104,44 +245,116 @@ CREATE TABLE public.data_imports (
     additional_info JSONB                 -- Дополнительная информация
 );
 
--- Создание представления для получения всех торгов с информацией об объектах
-CREATE VIEW auction.trades_with_objects AS
-SELECT 
-    t.*,
-    o.object_type,
+-- =============================================================
+-- ПРЕДСТАВЛЕНИЯ (VIEWS)
+-- =============================================================
+
+-- Полные данные организаций
+CREATE VIEW gosreestr.organizations_full AS
+SELECT
+    o.id,
+    o.bin,
+    o.name_ru,
+    ot.code AS organization_type_code,
+    ot.name_ru AS organization_type_name,
+    is.code AS industry_sector_code,
+    is.name_ru AS industry_sector_name,
+    ia.code AS industry_activity_code,
+    ia.name_ru AS industry_activity_name,
+    o.state_involvement,
+    os.code AS status_code,
+    os.name_ru AS status_name,
+    owner.bin AS owner_bin,
+    owner.name_ru AS owner_name,
+    ogu.bin AS ogu_bin,
+    ogu.name_ru AS ogu_name,
+    o.created_at,
+    o.updated_at
+FROM
+    gosreestr.organizations o
+LEFT JOIN
+    reference.organization_types ot ON o.organization_type_id = ot.id
+LEFT JOIN
+    reference.industry_sectors is ON o.industry_sector_id = is.id
+LEFT JOIN
+    reference.industry_activities ia ON o.industry_activity_id = ia.id
+LEFT JOIN
+    reference.organization_statuses os ON o.status_id = os.id
+LEFT JOIN
+    gosreestr.organizations owner ON o.owner_id = owner.id
+LEFT JOIN
+    gosreestr.organizations ogu ON o.ogu_id = ogu.id;
+
+-- Полные данные аукционов
+CREATE VIEW auction.auctions_full AS
+SELECT
+    a.id,
+    a.auction_id,
+    at.code AS auction_type_code,
+    at.name_ru AS auction_type_name,
+    ast.code AS auction_status_code,
+    ast.name_ru AS auction_status_name,
+    a.start_date,
+    a.publish_date,
+    a.start_price,
+    a.min_price,
+    a.guarantee_payment_amount,
+    pp.code AS payment_period_code,
+    pp.name_ru AS payment_period_name,
+    a.min_participants_count,
+    a.participants_count,
+    a.win_price,
+    a.note_ru,
+    a.note_kz,
+    a.created_at,
+    a.updated_at
+FROM
+    auction.auctions a
+LEFT JOIN
+    reference.auction_types at ON a.auction_type_id = at.id
+LEFT JOIN
+    reference.auction_statuses ast ON a.auction_status_id = ast.id
+LEFT JOIN
+    reference.payment_periods pp ON a.payment_period_id = pp.id;
+
+-- Полные данные объектов аукционов
+CREATE VIEW auction.objects_full AS
+SELECT
+    o.id,
+    o.auction_id,
+    a.auction_id AS original_auction_id,
+    ot.code AS object_type_code,
+    ot.name_ru AS object_type_name,
+    o.name_ru,
+    o.name_kz,
+    o.description_ru,
+    o.description_kz,
+    o.balanceholder_info_ru,
+    o.balanceholder_info_kz,
+    seller.bin AS seller_bin,
+    seller.name_ru AS seller_name,
     o.seller_xin,
-    o.name_ru AS object_name_ru,
-    o.name_kz AS object_name_kz,
     o.seller_info_ru,
-    o.object_adr_country,
-    o.object_adr_obl,
-    o.object_adr_reg,
-    o.object_adr_adr
-FROM 
-    auction.trades t
-LEFT JOIN 
-    auction.objects o ON t.auction_id = o.auction_id;
+    o.seller_info_kz,
+    o.seller_phone_ru,
+    o.seller_phone_kz,
+    o.meta_data,
+    o.created_at,
+    o.updated_at
+FROM
+    auction.objects o
+JOIN
+    auction.auctions a ON o.auction_id = a.id
+LEFT JOIN
+    reference.object_types ot ON o.object_type_id = ot.id
+LEFT JOIN
+    gosreestr.organizations seller ON o.seller_id = seller.id;
 
--- Добавление комментариев к таблицам для документации
-COMMENT ON TABLE gosreestr.objects IS 'Объекты госреестра';
-COMMENT ON TABLE auction.trades IS 'Аукционные торги';
-COMMENT ON TABLE auction.objects IS 'Объекты аукционных торгов';
-COMMENT ON TABLE public.data_imports IS 'История импорта данных';
+-- =============================================================
+-- ТРИГГЕРЫ для автоматического обновления updated_at
+-- =============================================================
 
--- Создание роли для работы с данными
-CREATE ROLE data_manager WITH LOGIN PASSWORD 'strong_password_here';
-
--- Предоставление прав на созданные объекты
-GRANT USAGE ON SCHEMA gosreestr TO data_manager;
-GRANT USAGE ON SCHEMA auction TO data_manager;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA gosreestr TO data_manager;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA auction TO data_manager;
-GRANT SELECT, INSERT, UPDATE ON public.data_imports TO data_manager;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA gosreestr TO data_manager;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA auction TO data_manager;
-GRANT USAGE, SELECT ON SEQUENCE public.data_imports_id_seq TO data_manager;
-
--- Создание триггерной функции для автоматического обновления updated_at
+-- Триггерная функция
 CREATE OR REPLACE FUNCTION update_modified_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -150,18 +363,91 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Добавление триггеров для автоматического обновления updated_at
-CREATE TRIGGER update_gosreestr_objects_modtime
-    BEFORE UPDATE ON gosreestr.objects
-    FOR EACH ROW
-    EXECUTE FUNCTION update_modified_column();
+-- Триггеры для всех таблиц
+CREATE TRIGGER update_organization_types_modtime
+    BEFORE UPDATE ON reference.organization_types
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
-CREATE TRIGGER update_auction_trades_modtime
-    BEFORE UPDATE ON auction.trades
-    FOR EACH ROW
-    EXECUTE FUNCTION update_modified_column();
+CREATE TRIGGER update_industry_sectors_modtime
+    BEFORE UPDATE ON reference.industry_sectors
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
-CREATE TRIGGER update_auction_objects_modtime
+CREATE TRIGGER update_industry_activities_modtime
+    BEFORE UPDATE ON reference.industry_activities
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_kfs_levels_modtime
+    BEFORE UPDATE ON reference.kfs_levels
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_organization_statuses_modtime
+    BEFORE UPDATE ON reference.organization_statuses
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_auction_types_modtime
+    BEFORE UPDATE ON reference.auction_types
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_auction_statuses_modtime
+    BEFORE UPDATE ON reference.auction_statuses
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_object_types_modtime
+    BEFORE UPDATE ON reference.object_types
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_payment_periods_modtime
+    BEFORE UPDATE ON reference.payment_periods
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_countries_modtime
+    BEFORE UPDATE ON reference.countries
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_regions_modtime
+    BEFORE UPDATE ON reference.regions
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_districts_modtime
+    BEFORE UPDATE ON reference.districts
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_organizations_modtime
+    BEFORE UPDATE ON gosreestr.organizations
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_auctions_modtime
+    BEFORE UPDATE ON auction.auctions
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_objects_modtime
     BEFORE UPDATE ON auction.objects
-    FOR EACH ROW
-    EXECUTE FUNCTION update_modified_column();
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_addresses_modtime
+    BEFORE UPDATE ON gosreestr.addresses
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+-- =============================================================
+-- ПРАВА ДОСТУПА
+-- =============================================================
+
+-- Создание роли
+CREATE ROLE data_manager WITH LOGIN PASSWORD 'strong_password_here';
+
+-- Предоставление прав на схемы
+GRANT USAGE ON SCHEMA reference TO data_manager;
+GRANT USAGE ON SCHEMA gosreestr TO data_manager;
+GRANT USAGE ON SCHEMA auction TO data_manager;
+
+-- Предоставление прав на таблицы
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA reference TO data_manager;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA gosreestr TO data_manager;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA auction TO data_manager;
+GRANT SELECT, INSERT, UPDATE ON public.data_imports TO data_manager;
+
+-- Предоставление прав на последовательности
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA reference TO data_manager;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA gosreestr TO data_manager;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA auction TO data_manager;
+GRANT USAGE, SELECT ON SEQUENCE public.data_imports_id_seq TO data_manager;
