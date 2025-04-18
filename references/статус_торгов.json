@@ -1,0 +1,72 @@
+[
+    {
+      "Value": "AcceptingApplications",
+      "Text": "Прием заявок",
+      "Items": []
+    },
+    {
+      "Value": "AcceptingAppUserEnter",
+      "Text": "Прием заявок; Регистрация участников в аукционном зале",
+      "Items": []
+    },
+    {
+      "Value": "AcceptApplicationsEnd",
+      "Text": "Прием заявок завершен",
+      "Items": []
+    },
+    {
+      "Value": "WaitingUserEnter",
+      "Text": "Регистрация участников в аукционном зале",
+      "Items": []
+    },
+    {
+      "Value": "Running",
+      "Text": "Проводится",
+      "Items": []
+    },
+    {
+      "Value": "Success",
+      "Text": "Состоялся",
+      "Items": []
+    },
+    {
+      "Value": "Failed",
+      "Text": "Не состоялся",
+      "Items": []
+    },
+    {
+      "Value": "Canceled",
+      "Text": "Результат торга отменен",
+      "Items": []
+    },
+    {
+      "Value": "Withdrawn",
+      "Text": "Отменен до начала торгов",
+      "Items": []
+    },
+    {
+      "Value": "CommissionOpeningResolve",
+      "Text": "Ожидание Протокола вскрытия заявок участников конкурса",
+      "Items": []
+    },
+    {
+      "Value": "AcceptingApplicationImprovements",
+      "Text": "Прием дополнительных заявок участников конкурса",
+      "Items": []
+    },
+    {
+      "Value": "AcceptApplicationImprovementsEnd",
+      "Text": "Прием дополнительных заявок участников конкурса завершен",
+      "Items": []
+    },
+    {
+      "Value": "CommissionResolve",
+      "Text": "Рассмотрение заявок тендерной (конкурсной) комиссией/продавцом",
+      "Items": []
+    },
+    {
+      "Value": "WaitingAuctionStart",
+      "Text": "Ожидание начала конкурсного аукциона",
+      "Items": []
+    }
+  ]

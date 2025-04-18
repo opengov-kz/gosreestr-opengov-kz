@@ -1,0 +1,22 @@
+[
+    {
+      "Value": "Monthly",
+      "Text": "Ежемесячная",
+      "Items": []
+    },
+    {
+      "Value": "Quraterly",
+      "Text": "Поквартальная",
+      "Items": []
+    },
+    {
+      "Value": "HalfYearly",
+      "Text": "Полугодовая",
+      "Items": []
+    },
+    {
+      "Value": "Yearly",
+      "Text": "Годовая",
+      "Items": []
+    }
+  ]
